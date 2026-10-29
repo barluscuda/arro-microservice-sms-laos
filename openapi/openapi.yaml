@@ -1,0 +1,269 @@
+openapi: 3.1.0
+info:
+  title: Arro SMS Laos API
+  version: 1.0.0
+  description: SMS submission and transaction history. Authentication is provided by the API gateway.
+servers:
+  - url: /
+paths:
+  /healthz:
+    get:
+      summary: Liveness check
+      operationId: health
+      responses:
+        '200':
+          description: Process is running
+  /readyz:
+    get:
+      summary: Readiness check
+      operationId: readiness
+      responses:
+        '200':
+          description: Database is reachable
+        '503':
+          description: Database is unavailable
+  /v1/sms:
+    post:
+      summary: Submit an SMS
+      operationId: sendSMS
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendSMSRequest'
+            example:
+              recipient: '2098765432'
+              content: Your code is 123456
+              title: OTP
+      responses:
+        '202':
+          description: SMS accepted by the provider; final delivery is not confirmed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransactionResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '502':
+          description: Submission failed or the provider outcome could not be confirmed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SendFailureResponse'
+    get:
+      summary: List SMS transactions
+      operationId: listSMS
+      parameters:
+        - in: query
+          name: status
+          schema:
+            $ref: '#/components/schemas/Status'
+        - in: query
+          name: recipient
+          schema:
+            type: string
+        - in: query
+          name: from
+          description: Inclusive RFC3339 submission timestamp
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: to
+          description: Inclusive RFC3339 submission timestamp
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - in: query
+          name: offset
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: SMS transactions and pagination metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HistoryResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /v1/sms/{id}:
+    get:
+      summary: Get one SMS transaction
+      operationId: getSMS
+      parameters:
+        - $ref: '#/components/parameters/TransactionID'
+      responses:
+        '200':
+          description: SMS transaction
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransactionResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /internal/v1/sms/{id}/delivery-status:
+    post:
+      summary: Record a delivery status
+      description: Intended for an API-gateway-authenticated provider event adapter. The adapter must translate a verified provider event into this request; the Telbiz SDK does not define a delivery callback contract.
+      operationId: updateDeliveryStatus
+      parameters:
+        - $ref: '#/components/parameters/TransactionID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [delivered, undelivered]
+                detail:
+                  type: string
+                  description: Optional provider delivery detail
+      responses:
+        '200':
+          description: Updated SMS transaction
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransactionResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+components:
+  parameters:
+    TransactionID:
+      in: path
+      name: id
+      required: true
+      schema:
+        type: string
+        format: uuid
+  schemas:
+    Status:
+      type: string
+      enum: [queued, sent, failed, delivered, undelivered]
+    SendSMSRequest:
+      type: object
+      additionalProperties: false
+      required: [recipient, content, title]
+      properties:
+        recipient:
+          type: string
+          minLength: 1
+        content:
+          type: string
+          minLength: 1
+        title:
+          type: string
+          enum: [OTP, Info, Promotion, News]
+    Transaction:
+      type: object
+      required: [id, recipient, content, title, status, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        recipient:
+          type: string
+        content:
+          type: string
+        title:
+          type: string
+        submitted_at:
+          type: string
+          format: date-time
+        status:
+          $ref: '#/components/schemas/Status'
+        provider_code:
+          type: string
+        provider_message:
+          type: string
+        provider_detail:
+          type: string
+        error_detail:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    TransactionResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: '#/components/schemas/Transaction'
+    HistoryResponse:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Transaction'
+        pagination:
+          type: object
+          required: [limit, offset, total]
+          properties:
+            limit:
+              type: integer
+            offset:
+              type: integer
+            total:
+              type: integer
+              format: int64
+    SendFailureResponse:
+      type: object
+      required: [data, error]
+      properties:
+        data:
+          $ref: '#/components/schemas/Transaction'
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: SMS transaction not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'

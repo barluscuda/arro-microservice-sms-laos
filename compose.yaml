@@ -1,0 +1,32 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: sms
+      POSTGRES_USER: sms
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sms -d sms"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d:ro
+
+  sms-api:
+    build: .
+    environment:
+      PORT: 3285
+      DATABASE_URL: postgres://sms:${POSTGRES_PASSWORD}@postgres:5432/sms?sslmode=disable
+      TELBIZ_CLIENT_ID: ${TELBIZ_CLIENT_ID:?set TELBIZ_CLIENT_ID}
+      TELBIZ_CLIENT_SECRET: ${TELBIZ_CLIENT_SECRET:?set TELBIZ_CLIENT_SECRET}
+    expose:
+      - "3285"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
